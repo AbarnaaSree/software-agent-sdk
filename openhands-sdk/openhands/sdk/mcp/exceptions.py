@@ -17,3 +17,9 @@ class MCPTimeoutError(MCPError):
         self.timeout = timeout
         self.config = config
         super().__init__(message)
+
+
+class ToolTrustError(MCPError):
+    """Raised when an MCP tool fails trust verification."""
+
+    pass

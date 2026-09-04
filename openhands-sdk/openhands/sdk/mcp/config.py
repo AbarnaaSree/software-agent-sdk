@@ -506,11 +506,31 @@ class MCPServer(_MCPBaseModel):
     cwd: str | None = None
     description: str | None = None
     icon: str | None = None
+
+    trust_credential: str | None = Field(
+        default=None,
+        description=(
+            "Optional trust credential used to verify this MCP server "
+            "before tool dispatch."
+        ),
+    )
+
+    trust_verification: bool = Field(
+        default=False,
+        description=(
+            "Whether to verify this MCP server's trust credential before tool dispatch."
+        ),
+    )
+    trust_verifier_endpoint: str | None = Field(
+        default=None,
+        description="Optional endpoint used for MCP trust verification.",
+    )
     timeout: float | None = None
     sse_read_timeout: float | None = None
     keep_alive: bool | None = None
     headers: dict[str, SecretStr] | None = None
     auth: MCPAuthCredential | None = None
+
     enabled: bool = Field(
         default=True,
         description=(

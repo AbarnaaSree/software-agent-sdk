@@ -12,7 +12,17 @@ from openhands.sdk.mcp.config import (
     MCPServer,
     to_fastmcp_mcp_config,
 )
-from openhands.sdk.mcp.exceptions import MCPError, MCPTimeoutError
+from openhands.sdk.mcp.exceptions import (
+    MCPError,
+    MCPTimeoutError,
+    ToolTrustError,
+)
+from openhands.sdk.mcp.trust import (
+    DEFAULT_TRUST_VERIFIER_ENDPOINT,
+    HTTPTrustVerifier,
+    TrustVerificationResult,
+    TrustVerifier,
+)
 
 
 if TYPE_CHECKING:
@@ -57,4 +67,9 @@ __all__ = [
     "to_fastmcp_mcp_config",
     "MCPError",
     "MCPTimeoutError",
+    "ToolTrustError",
+    "DEFAULT_TRUST_VERIFIER_ENDPOINT",
+    "HTTPTrustVerifier",
+    "TrustVerificationResult",
+    "TrustVerifier",
 ]
