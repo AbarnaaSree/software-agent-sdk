@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp import Client as AsyncMCPClient
 
+from openhands.sdk.mcp.config import MCPServer
 from openhands.sdk.mcp.exceptions import MCPError
 from openhands.sdk.utils.async_executor import AsyncExecutor
 
@@ -42,13 +43,20 @@ class MCPClient(AsyncMCPClient):
     _closed: bool
     _tools: "list[MCPToolDefinition]"
     _tools_reconciled_callback: ToolsReconciledCallback | None
+    _server_configs: dict[str, MCPServer]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        *args,
+        server_configs: dict[str, MCPServer] | None = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self._executor = AsyncExecutor()
         self._closed = False
         self._tools = []
         self._tools_reconciled_callback = None
+        self._server_configs = server_configs or {}
 
     @property
     def tools(self) -> "list[MCPToolDefinition]":

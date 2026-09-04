@@ -21,6 +21,12 @@ from openhands.sdk.llm import TextContent
 from openhands.sdk.logger import get_logger
 from openhands.sdk.mcp.client import MCPClient
 from openhands.sdk.mcp.definition import MCPToolAction, MCPToolObservation
+from openhands.sdk.mcp.exceptions import ToolTrustError
+from openhands.sdk.mcp.trust import (
+    DEFAULT_TRUST_VERIFIER_ENDPOINT,
+    HTTPTrustVerifier,
+    TrustVerifier,
+)
 from openhands.sdk.observability.laminar import observe
 from openhands.sdk.security import risk
 from openhands.sdk.skills.utils import expand_variable_references
@@ -59,16 +65,65 @@ class MCPToolExecutor(ToolExecutor):
     tool_name: str
     client: MCPClient
     timeout: float
+    trust_verifier: TrustVerifier | None
+    trust_credential: str | None
+    trust_verification: bool
 
     def __init__(
         self,
         tool_name: str,
         client: MCPClient,
         timeout: float = MCP_TOOL_TIMEOUT_SECONDS,
+        trust_verifier: TrustVerifier | None = None,
+        trust_credential: str | None = None,
+        trust_verification: bool = False,
     ):
         self.tool_name = tool_name
         self.client = client
         self.timeout = timeout
+        self.trust_verifier = trust_verifier
+        self.trust_credential = trust_credential
+        self.trust_verification = trust_verification
+
+    async def _verify_trust(self) -> None:
+        """Verify the MCP server trust credential before tool dispatch."""
+        if not self.trust_verification:
+            return
+
+        if self.trust_verifier is None:
+            raise ToolTrustError(
+                f"MCP tool '{self.tool_name}' requires trust verification, "
+                "but no trust verifier is configured."
+            )
+
+        if not self.trust_credential:
+            raise ToolTrustError(
+                f"MCP tool '{self.tool_name}' requires trust verification, "
+                "but no trust credential is configured."
+            )
+
+        try:
+            result = await self.trust_verifier.verify(self.trust_credential)
+        except Exception as exc:
+            logger.error(
+                "Trust verification failed for MCP tool '%s': %s",
+                self.tool_name,
+                exc,
+                exc_info=True,
+            )
+            raise ToolTrustError(
+                f"Trust verification failed for MCP tool '{self.tool_name}'."
+            ) from exc
+
+        if not result.permitted:
+            logger.warning(
+                "Trust verification denied MCP tool '%s': decision=%s",
+                self.tool_name,
+                result.decision,
+            )
+            raise ToolTrustError(
+                f"Trust verification denied MCP tool '{self.tool_name}'."
+            )
 
     @observe(name="MCPToolExecutor.call_tool", span_type="TOOL")
     async def call_tool(self, action: MCPToolAction) -> MCPToolObservation:
@@ -79,6 +134,9 @@ class MCPToolExecutor(ToolExecutor):
         failing. This prevents a single transient error from permanently
         disabling all MCP tools for the remainder of the conversation.
         """
+        await self._verify_trust()
+
+
         if not self.client.is_connected():
             if self.client._closed:
                 return MCPToolObservation.from_text(
@@ -238,7 +296,26 @@ def _create_mcp_action_type(action_type: mcp.types.Tool) -> type[Schema]:
             _mcp_dynamic_action_type.popitem(last=False)
         return mcp_action_type
 
+def _get_mcp_server_config(
+    tool_name: str,
+    server_configs: dict[str, Any],
+) -> Any | None:
+    """Resolve the MCP server configuration for a tool name."""
+    matches = [
+        (server_name, server_config)
+        for server_name, server_config in server_configs.items()
+        if tool_name == server_name
+        or tool_name.startswith(f"{server_name}_")
+    ]
 
+    if matches:
+        # Prefer the longest server-name prefix to handle overlapping names.
+        return max(matches, key=lambda item: len(item[0]))[1]
+
+    if len(server_configs) == 1:
+        return next(iter(server_configs.values()))
+
+    return None
 class MCPToolDefinition(ToolDefinition[MCPToolAction, MCPToolObservation]):
     """MCP Tool that wraps an MCP client and provides tool functionality."""
 
@@ -330,6 +407,10 @@ class MCPToolDefinition(ToolDefinition[MCPToolAction, MCPToolObservation]):
         mcp_tool: mcp.types.Tool,
         mcp_client: MCPClient,
     ) -> Sequence["MCPToolDefinition"]:
+        server_config = _get_mcp_server_config(
+            mcp_tool.name, mcp_client._server_configs
+        )
+
         try:
             annotations = (
                 ToolAnnotations.model_validate(
@@ -345,7 +426,30 @@ class MCPToolDefinition(ToolDefinition[MCPToolAction, MCPToolObservation]):
                 observation_type=MCPToolObservation,
                 annotations=annotations,
                 meta=mcp_tool.meta,
-                executor=MCPToolExecutor(tool_name=mcp_tool.name, client=mcp_client),
+                executor=MCPToolExecutor(
+                    tool_name=mcp_tool.name,
+                    client=mcp_client,
+                    trust_verifier=(
+                        HTTPTrustVerifier(
+                            endpoint=(
+                                server_config.trust_verifier_endpoint
+                                or DEFAULT_TRUST_VERIFIER_ENDPOINT
+                            )
+                        )
+                        if server_config and server_config.trust_verification
+                        else None
+                    ),
+                    trust_credential=(
+                        server_config.trust_credential
+                        if server_config
+                        else None
+                    ),
+                    trust_verification=(
+                        server_config.trust_verification
+                        if server_config
+                        else False
+                    ),
+                ),
                 # pass-through fields (enabled by **extra in Tool.create)
                 mcp_tool=mcp_tool,
             )
